@@ -20,7 +20,12 @@ services:
       start_period: 30s
   server:
     build: ./server
+    command: ["sh", "-c", "npm run db:migrate && npm start"]
+    volumes:
+      - ./database:/database:ro
     environment:
+      NODE_ENV: development
+      DATABASE_DIR: /database
       PORT: 3000
       DB_HOST: db
       DB_PORT: 3306
@@ -52,5 +57,38 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+  test-db:
+    image: mysql:8.4
+    profiles: [test]
+    environment:
+      MYSQL_DATABASE: smartrent_test
+      MYSQL_USER: smartrent_test
+      MYSQL_PASSWORD: isolated_test_only
+      MYSQL_ROOT_PASSWORD: isolated_root_test_only
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u$$MYSQL_USER $$MYSQL_DATABASE -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+  test:
+    build: ./server
+    profiles: [test]
+    command: npm run test:integration
+    volumes:
+      - ./database:/database:ro
+    environment:
+      NODE_ENV: test
+      DATABASE_DIR: /database
+      DB_HOST: test-db
+      DB_PORT: 3306
+      DB_NAME: smartrent_test
+      DB_USER: smartrent_test
+      DB_PASSWORD: isolated_test_only
+    depends_on:
+      test-db:
+        condition: service_healthy
 volumes:
   mysql_data:

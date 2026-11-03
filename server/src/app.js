@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { carsRouter } from './routes/cars.js';
 
 export function createApp(database) {
   const app = express();
@@ -16,10 +17,11 @@ export function createApp(database) {
     }
   });
 
+  app.use('/api/cars', carsRouter(database));
   app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }));
   app.use((error, _req, res, _next) => {
     const status = error.status === 400 ? 400 : 500;
-    res.status(status).json({ error: { code: status === 400 ? 'INVALID_JSON' : 'INTERNAL_ERROR', message: status === 400 ? 'Invalid JSON' : 'Unexpected error' } });
+    res.status(status).json({ error: { code: status === 400 ? (error.code || 'INVALID_JSON') : 'INTERNAL_ERROR', message: status === 400 ? (error.code === 'INVALID_INPUT' ? error.message : 'Invalid JSON') : 'Unexpected error' } });
   });
   return app;
 }

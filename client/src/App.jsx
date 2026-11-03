@@ -1,25 +1,23 @@
 import { useEffect, useState } from 'react';
-import { api } from './services/api.js';
+import Navbar from './components/layout/Navbar.jsx';
+import Catalog from './pages/Catalog.jsx';
+import CarDetails from './pages/CarDetails.jsx';
 
 export default function App() {
-  const [status, setStatus] = useState('Bağlantı kontrol ediliyor…');
-
+  const [route, setRoute] = useState(window.location.hash || '#/');
   useEffect(() => {
-    const controller = new AbortController();
-    api.get('/health', { signal: controller.signal })
-      .then(() => setStatus('Geliştirme ortamı hazır.'))
-      .catch(() => {
-        if (!controller.signal.aborted) setStatus('Servise ulaşılamıyor. Lütfen tekrar deneyin.');
-      });
-    return () => controller.abort();
+    const update = () => {
+      if (window.location.hash === '#main') return;
+      setRoute(window.location.hash || '#/');
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
   }, []);
-
-  return (
-    <main>
-      <p className="eyebrow">ARAÇ KİRALAMA YÖNETİM SİSTEMİ</p>
-      <h1>SmartRent</h1>
-      <p>Proje geliştirme aşamasında.</p>
-      <p role="status">{status}</p>
-    </main>
-  );
+  const detail = route.match(/^#\/cars\/([^/]+)$/);
+  return <>
+    <a className="skip-link" href="#main">Skip to content</a><Navbar />
+    <main id="main" tabIndex="-1">{detail ? <CarDetails key={detail[1]} id={detail[1]} /> : route === '#/' || route === '#main' ? <Catalog /> : <section className="state-panel"><h1>Page not found</h1><a href="#/">Back to catalog</a></section>}</main>
+    <footer><a className="brand" href="#/">smartrent.</a><p>Discover your next journey.</p><span>Car rental management system</span></footer>
+  </>;
 }

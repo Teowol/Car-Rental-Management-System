@@ -1,0 +1,54 @@
+import { test, expect } from '@playwright/test';
+
+test('real catalog filters, detail navigation and mobile layout', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('The right carfor every journey.');
+  await expect(page.locator('.car-card')).toHaveCount(10);
+  await page.getByLabel('Car category', { exact: true }).selectOption('suv');
+  await page.getByLabel('Transmission', { exact: true }).selectOption('automatic');
+  await page.getByLabel('Minimum seats').fill('7');
+  await page.getByRole('button', { name: 'Show cars' }).click();
+  await expect(page.locator('.car-card')).toHaveCount(1);
+  await expect(page.locator('.car-card')).toContainText('5008');
+  await expect(page.locator('.results-heading')).toContainText('1 car');
+  await page.getByRole('link', { name: 'Peugeot 5008 details' }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('5008');
+  await expect(page.locator('.detail-specs')).toContainText('7 seats');
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('5008');
+  await page.getByRole('link', { name: 'Back to the catalog' }).click();
+  await expect(page.locator('.car-card')).toHaveCount(10);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Show cars' })).toBeVisible();
+  await page.getByLabel('Brand or model').fill('unfindable');
+  await page.getByRole('button', { name: 'Show cars' }).click();
+  await expect(page.getByRole('heading', { name: 'No cars match your filters' })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.locator('.car-card')).toHaveCount(10);
+  expect(errors).toEqual([]);
+});
+
+test('loading, error, retry, validation and missing detail states', async ({ page }) => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/cars?*', async route => { await gate; await route.fulfill({ status: 503, json: { error: { message: 'Test connection error' } } }); });
+  await page.goto('/');
+  await expect(page.getByText('Loading cars…', { exact: true })).toBeVisible();
+  release();
+  await expect(page.getByRole('alert')).toContainText('Test connection error');
+  await page.unroute('**/api/cars?*');
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.locator('.car-card')).toHaveCount(10);
+  await page.getByLabel('Minimum price', { exact: true }).fill('2000');
+  await page.getByLabel('Maximum price', { exact: true }).fill('1000');
+  await page.getByRole('button', { name: 'Show cars' }).click();
+  await expect(page.getByRole('alert')).toContainText('Minimum price cannot exceed maximum price.');
+  await page.goto('/#/cars/4294967295');
+  await expect(page.getByRole('alert')).toContainText('Car not found.');
+  await page.goto('/#/cars/invalid');
+  await expect(page.getByRole('alert')).toContainText('Enter a valid car ID.');
+});
