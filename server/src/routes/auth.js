@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authError, validateBody, emailValue, passwordValue, profileValues, hashPassword, verifyPassword, publicUser, issueSession, readToken, tokenHash, sessionCookie, cookieOptions, requireAuth, requireAdmin } from '../services/auth.js';
+import { authError, validateBody, emailValue, passwordValue, profileValues, hashPassword, verifyPassword, publicUser, issueSession, readToken, tokenHash, sessionCookie, cookieOptions, requireAuth, requireAdmin, requireTrustedWrite } from '../services/auth.js';
 
 export function accountRouter(database) {
   const router = Router();
@@ -15,15 +15,7 @@ export function accountRouter(database) {
     entry.count += 1; attempts.set(key, entry); next();
   }
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-  router.use((req, _res, next) => {
-    if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
-      // Exact Origin plus a custom header prevents cross-origin form/login CSRF.
-      const origin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-      if (req.get('Origin') !== origin || req.get('X-Requested-With') !== 'SmartRent') throw authError(403, 'INVALID_ORIGIN', 'Request origin not allowed.');
-      if (!req.is('application/json')) throw authError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Use application/json.');
-    }
-    next();
-  });
+  router.use(requireTrustedWrite);
   router.post('/auth/register', limit, async (req, res) => {
     validateBody(req.body, ['email', 'password', 'fullName', 'phone']);
     const profile = profileValues(req.body);

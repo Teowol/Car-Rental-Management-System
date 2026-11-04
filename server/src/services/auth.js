@@ -23,7 +23,7 @@ export async function verifyPassword(password, stored) {
 }
 export function validateBody(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !fields.includes(key))) {
-    throw authError(400, 'INVALID_INPUT', 'Unsupported account fields.');
+    throw authError(400, 'INVALID_INPUT', 'Unsupported request fields.');
   }
 }
 export function emailValue(value) {
@@ -77,5 +77,13 @@ export function requireAuth(database) {
 }
 export function requireAdmin(req, _res, next) {
   if (req.user.role !== 'admin') throw authError(403, 'FORBIDDEN', 'Administrator access required.');
+  next();
+}
+export function requireTrustedWrite(req, _res, next) {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    const origin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+    if (req.get('Origin') !== origin || req.get('X-Requested-With') !== 'SmartRent') throw authError(403, 'INVALID_ORIGIN', 'Request origin not allowed.');
+    if (!req.is('application/json')) throw authError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Use application/json.');
+  }
   next();
 }

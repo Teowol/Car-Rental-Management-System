@@ -1,6 +1,6 @@
-# Working application — Phase 4
+# Working application — Phase 5
 
-Catalog, accounts and date-based availability use MySQL. Customers can register, sign in/out and edit their own profile. Guests and customers can check rental dates and see available alternatives. Administrator access is enforced by the API and demonstrated by a protected workspace. Reservation creation, payments and admin CRUD belong to later phases. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
+Catalog, accounts, date-based availability and reservations use MySQL. Customers can register, sign in/out, edit their profile, create reservations and view/cancel their own bookings. Guests can check rental dates and see available alternatives before signing in. Administrator access is enforced by the API and demonstrated by a protected workspace. Payments and admin CRUD belong to later phases. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
 
 The interface, accessibility labels, API messages and documentation are in English. Prices use English number formatting; the currency remains TRY.
 
@@ -86,7 +86,7 @@ Phase 2 acceptance results on 2026-11-03:
 - Desktop screenshot reviewed; browser tests confirmed no horizontal overflow at a 390 px mobile viewport.
 - `git diff --check`: passed. .env and test output remain excluded from Git; docs/ was not recreated.
 
-At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, and no reservation creation yet.
+At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, and no payment workflow yet.
 
 ### Phase 3 — Accounts and role security
 
@@ -157,7 +157,7 @@ Both endpoints are public, parameterized and return Cache-Control: no-store. Mis
 
 Alternative selection excludes the source, maintenance/inactive cars and all cars overlapping the exact requested interval. Ranking is lexicographic: same category first, then absolute daily price difference (SQL DECIMAL, returned as a two-decimal string), absolute seat difference, same transmission, and car ID as a deterministic tie-breaker. Category preference takes precedence over a closer price in another category. Seat count is a proximity preference, not a minimum-capacity filter. Fuel is displayed but does not affect ranking. The source may itself be available; the alternatives endpoint still lists other eligible vehicles.
 
-This phase performs read-only availability checks. It creates no bookings, holds or payment records and does not guarantee that a vehicle remains available after the check. Phase 5 will add authenticated booking creation, server-side pricing, history/cancellation and a tested transaction/locking strategy to prevent concurrent double booking. There is no public reservation-write endpoint in Phase 4.
+Phase 4 introduced read-only availability checks. It created no bookings, holds or payment records and did not guarantee that a vehicle remained available after a check. The subsequent Phase 5 implementation below adds authenticated booking creation, pricing and cancellation; availability checks themselves remain advisory.
 
 Phase 4 acceptance on 2026-11-04:
 
@@ -169,7 +169,45 @@ Phase 4 acceptance on 2026-11-04:
 - The first integration run found an excessively long decimal scale in daily price differences (29/30 passed). Explicit SQL DECIMAL casts corrected it; the complete rerun passed 30/30.
 - `docker compose up --build -d --wait`: passed; database, API and client healthy. `git diff --check`: passed. Existing development data was preserved.
 
-Only Phase 4 was added in this step. Phase 5 remains pending.
+Phase 4 was completed before the Phase 5 implementation below.
+
+### Phase 5 — Reservations, pricing and concurrency safety
+
+After checking dates on a car detail page, review the server-calculated daily rate, rental-day count and total, then select Create reservation. Guests are sent through sign-in/signup and returned to the same car/dates. A successful reservation displays its reference and pending status. My bookings (`#/bookings`) lists the signed-in user's reservations, prices and statuses with pagination, reload support, empty/error/retry states and cancellation confirmation. Date inputs are disabled while creating a reservation to avoid mixing a submitted interval with edited dates.
+
+Rental days use the existing end-exclusive Istanbul calendar policy. The total is the locked current daily rate multiplied by calendar days; no extra fees, discounts or payments are applied. The server uses integer cents (BigInt), stores decimal strings and formats even large totals without floating-point rounding. The UI sends the reviewed daily rate as expectedDailyPrice; if the rate changed, the API returns 409 PRICE_CHANGED with a fresh quote and requires the customer to review it before submitting again. Expected price is only a comparison, never the source of the stored amount. Caller-supplied total, status or user ID fields are rejected.
+
+Migration `006-reservation-prices.sql` adds a one-to-one price snapshot table with daily_price DECIMAL(12,2), rental_days, total_amount DECIMAL(20,2), TRY currency, a foreign key and amount consistency checks. A separate additive table satisfies the restart-safe migration contract and preserves existing reservation intervals without rewriting applied migrations or inventing historical prices. Earlier interval records without snapshots show a pricing-unavailable message. New reservations and snapshots are inserted atomically; later price changes never overwrite their saved totals.
+
+| Method | Endpoint | Behavior |
+|---|---|---|
+| GET | `/api/cars/:id/quote?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` | Public current-rate quote: carId, dates, dailyPrice, rentalDays, totalAmount, currency. Does not reserve dates. |
+| POST | `/api/reservations` | Authenticated; carId/startDate/endDate and optional expectedDailyPrice. Returns 201 `{ reservation }`. |
+| GET | `/api/reservations/mine?page=1&pageSize=10` | Authenticated, current owner only; `{ items, page, pageSize, total }`. Maximum pageSize 50. |
+| PATCH | `/api/reservations/:id/cancel` | Authenticated owner only; empty JSON object. Returns `{ reservation }`; safe to repeat. |
+
+Booking/cancellation writes reuse the exact Origin, JSON and X-Requested-With CSRF policy. Account identity comes exclusively from the session. Other users' reservation IDs return 404, including for cancellation; no private user-ID lookup is exposed. Both customers and administrators may create/view/cancel their own reservations; cross-customer admin management remains Phase 7. Private booking and public quote responses use Cache-Control: no-store.
+
+Each create transaction uses READ COMMITTED and first locks the selected car row with SELECT FOR UPDATE. Under that lock it rechecks active status, dates, current price and pending/confirmed overlaps using a locking read, then inserts both reservation and price snapshot before committing. All cancellation transactions take the same car lock first, then lock and revalidate the owned reservation. The per-car mutex also covers an initially empty reservation set; READ COMMITTED avoids unnecessary gap-lock contention between different cars. Locking-read behavior follows the [MySQL 8.4 documentation](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html).
+
+This protocol is required for every future operation that creates/changes reservation intervals or blocking status: lock the car first, then reservation rows, and recheck before commit. The tested guarantee applies to application writers following this protocol; direct SQL writes can bypass it. A transaction error rolls back both inserts and releases the connection. A car becoming reserved or entering maintenance returns 409 CAR_UNAVAILABLE with available alternatives for the same dates, calculated after rollback/release; inactive/missing cars return 404. The UI replaces its stale availability result with those alternatives.
+
+New reservations are pending and intentionally block without automatic expiry, including before payment features exist. They remain in history until cancelled or transitioned in a later phase. Pending and confirmed reservations can be cancelled only before the pickup date in Europe/Istanbul; pickup-day, already-started and completed records reject cancellation with 409 CANNOT_CANCEL. Repeating cancellation of an already cancelled owned reservation succeeds. Cancellation preserves history/pricing and immediately releases date availability. No confirmation/payment/completion transition API is added here: payment transitions belong to Phase 6 and admin management to Phase 7.
+
+There is no automatic retry of reservation creation after an uncertain network response. The UI directs the customer to My bookings before trying again; overlapping repeats are rejected rather than creating duplicates. Request-key idempotency, refunds and pending expiry are not implemented in Phase 5.
+
+Phase 5 acceptance on 2026-11-04:
+
+- `npm test --prefix server`: 8/8 passed. Includes exact-cent/leap-day pricing and totals beyond Number precision.
+- `npm run build --prefix client`: passed.
+- `docker compose --profile test run --build --rm test`: 43/43 passed on isolated real MySQL. The thirteen added cases cover snapshots and price changes, forged fields, auth/CSRF, maintenance/inactive/missing cars, all overlap shapes and adjacency, ownership/pagination, cancellation eligibility/idempotency, released availability, rollback after snapshot failure, and concurrency.
+- Concurrency acceptance: eight simultaneous HTTP requests across two Express app instances yielded exactly one 201 and seven 409 conflicts, with one reservation and one snapshot. A pending transaction committed while another booking waited on the car lock was observed correctly. Different-car requests succeeded concurrently; cancellation/create races left no overlapping blocking reservations.
+- `npm run test:e2e --prefix client`: 10/10 passed in Edge, including all earlier account/availability/catalog scenarios. New real flows cover guest dates through signup, reservation confirmation, persisted history after reload, cancellation, released availability and an actual stale-availability conflict. Price-change/network/list-error UI states use intercepted responses; actual price enforcement is verified by MySQL tests.
+- Browser checks create unique `e2e-booking-...@example.test` customers and reservation history in the selected application database. Their real reservations are cancelled in cleanup; existing customers, bookings and vehicle prices are not changed.
+- Desktop/mobile booking screenshots reviewed under ignored `client/test-results/`; the 390 px layout has no horizontal overflow.
+- `docker compose up --build -d --wait`: passed with all application services healthy; migrations preserve existing data. `git diff --check`: passed.
+
+Only Phase 5 was added in this step. Payments and loyalty remain Phase 6.
 
 ## 0. Project contract
 
@@ -357,7 +395,7 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 - [x] P2 Catalog with real DB data
 - [x] P3 Accounts and secure roles
 - [x] P4 Availability and alternatives
-- [ ] P5 Booking and concurrency safety
+- [x] P5 Booking and concurrency safety
 - [ ] P6 Simulated payments and loyalty
 - [ ] P7 Admin management CRUD
 - [ ] P8 Full tests and demo documentation

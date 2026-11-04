@@ -10,7 +10,8 @@ export function ProtectedPage({ admin = false, children }) {
   if (admin && user.role !== 'admin') return <section className="state-panel"><h1>Access denied</h1><p>Administrator access required.</p><a href="#/account">My account</a></section>;
   return children;
 }
-export function AuthPage({ register = false }) {
+export function AuthPage({ register = false, nextPage = '' }) {
+  const returnTo = /^#\/cars\/[1-9]\d*(?:\?[^#]*)?$/.test(nextPage) ? nextPage : '';
   const { user, loading, authenticate } = useAuth();
   const [values, setValues] = useState({ email: '', password: '', fullName: '', phone: '' });
   const [busy, setBusy] = useState(false);
@@ -20,7 +21,7 @@ export function AuthPage({ register = false }) {
     event.preventDefault(); setBusy(true); setError('');
     try {
       await authenticate(register ? 'register' : 'login', register ? values : { email: values.email, password: values.password });
-      window.location.hash = '#/account';
+      window.location.hash = returnTo || '#/account';
     } catch (failure) { setError(failureMessage(failure)); }
     finally { setBusy(false); }
   }
@@ -37,7 +38,7 @@ export function AuthPage({ register = false }) {
       {error && <p role="alert">{error}</p>}
       <button className="primary-button" disabled={busy}>{busy ? 'Please wait…' : register ? 'Create account' : 'Sign in'}</button>
     </form>
-    <p>{register ? 'Already have an account? ' : 'New to SmartRent? '}<a href={register ? '#/login' : '#/register'}>{register ? 'Sign in' : 'Create account'}</a></p>
+    <p>{register ? 'Already have an account? ' : 'New to SmartRent? '}<a href={(register ? '#/login' : '#/register') + (returnTo ? '?next=' + encodeURIComponent(returnTo) : '')}>{register ? 'Sign in' : 'Create account'}</a></p>
   </section>;
 }
 export function ProfilePage() {
