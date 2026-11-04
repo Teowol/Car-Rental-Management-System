@@ -1,14 +1,12 @@
-# SmartRent — Agent-Ready Development Roadmap
+# Working application — Phase 4
 
-## Working application — Phase 2
-
-Catalog data comes from MySQL; the client does not contain a hardcoded car list. This phase provides a read-only catalog. Accounts, bookings, date-based availability, payments and admin operations belong to later phases. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
+Catalog, accounts and date-based availability use MySQL. Customers can register, sign in/out and edit their own profile. Guests and customers can check rental dates and see available alternatives. Administrator access is enforced by the API and demonstrated by a protected workspace. Reservation creation, payments and admin CRUD belong to later phases. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
 
 The interface, accessibility labels, API messages and documentation are in English. Prices use English number formatting; the currency remains TRY.
 
 English-language update verified on 2026-11-03: server tests (3/3), client build and Edge browser scenarios (2/2) passed. Browser checks include the English document language, heading, filters, detail view, empty/error states and mobile layout. Docker services were rebuilt with the translated application.
 
-### Setup and startup
+## Setup and startup
 
 Requires Node.js 24, npm and Docker Desktop with Linux containers. For a new checkout:
 
@@ -25,7 +23,7 @@ Data is stored in the mysql_data volume. `down -v` deletes data and must not be 
 
 ### Schema and seed data
 
-`database/migrations/002-cars.sql` creates the cars table: unique vehicle_code, brand/model/category, seats/transmission/fuel, DECIMAL(12,2) daily price, image path, and active/maintenance/inactive status. Prices cannot be negative; seats must be between 1 and 20. There is no global available field. User, reservation and payment tables will be added in their respective phases.
+`database/migrations/002-cars.sql` creates the cars table: unique vehicle_code, brand/model/category, seats/transmission/fuel, DECIMAL(12,2) daily price, image path, and active/maintenance/inactive status. Prices cannot be negative; seats must be between 1 and 20. There is no global available field. Users/sessions are introduced in 003/004 and the reservation interval foundation in 005; payments remain a later phase.
 
 The existing schema_version bootstrap table is preserved. The schema_migrations table tracks new migrations by filename and SHA-256 checksum. A lock serializes concurrent migration runs. Line endings are normalized; changing an applied file causes an error. Since MySQL DDL auto-commits, each migration must contain one restart-safe SQL statement. Future changes use new files; there is no automatic rollback or volume reset.
 
@@ -88,7 +86,90 @@ Phase 2 acceptance results on 2026-11-03:
 - Desktop screenshot reviewed; browser tests confirmed no horizontal overflow at a 390 px mobile viewport.
 - `git diff --check`: passed. .env and test output remain excluded from Git; docs/ was not recreated.
 
-At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. Phase 2 acceptance is complete. Phase 3 and later phases are outside this work. Known limitations: illustrative images, the Vite development server, and no date-based availability or bookings yet.
+At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, and no reservation creation yet.
+
+### Phase 3 — Accounts and role security
+
+Account pages: `#/register`, `#/login`, `#/account` and `#/admin`. The React auth context restores the session after reload, handles session-check errors with retry, and clears expired authentication. The navbar offers sign in/out and account links; the admin link appears only for administrators. Page guards provide helpful sign-in/access-denied states; the API independently enforces authorization.
+
+New, additive migrations `003-users.sql` and `004-sessions.sql` create users and persistent sessions without changing existing vehicle data. Emails are trimmed, lowercased, ASCII and unique in MySQL. Profile fields are full name (1–100 characters), email (up to 254), and optional phone (up to 30). Passwords are 12–128 characters, stored as salted scrypt digests (N=32768, r=8, p=3; random 16-byte salt). Neither password hashes nor session digests are returned by account APIs. Registration always creates a customer; extra fields such as role/id/password in profile updates are rejected.
+
+Sessions use random 32-byte tokens with an absolute eight-hour expiry. MySQL stores only SHA-256 token digests; the raw token is carried in an HttpOnly, SameSite=Strict, host-only cookie scoped to `/api`. Production adds Secure and requires HTTPS. Login/registration rotate the browser's previous session; logout deletes the database session and clears the cookie. Expired sessions are rejected on every request and cleaned up on login/registration. Multiple browser sessions are allowed. Roles are read from MySQL on every authenticated request, so role changes apply immediately.
+
+All account writes require JSON, an exact Origin matching CLIENT_ORIGIN, and `X-Requested-With: SmartRent`. This custom-header plus Origin policy protects login and authenticated writes against CSRF; the Axios client supplies the header and credentials automatically. API tools must send these headers too. CORS permits credentials only for the configured frontend origin. Account responses use Cache-Control: no-store. Login and registration share a bounded per-IP limit of 30 attempts per 15 minutes per API process; it resets on restart and is not a distributed production limiter.
+
+| Method | Endpoint | Behavior |
+|---|---|---|
+| POST | `/api/auth/register` | email, password, fullName, optional phone; returns 201 `{ user }` and session cookie |
+| POST | `/api/auth/login` | email/password; returns `{ user }` and a new session cookie |
+| POST | `/api/auth/logout` | empty JSON object; revokes cookie session, returns 204; safe to repeat |
+| GET | `/api/me` | current user's public profile; 401 without a valid session |
+| PATCH | `/api/me` | partial email/fullName/phone update, scoped exclusively to authenticated user |
+| GET | `/api/admin/access` | current administrator profile; 401 anonymous, 403 customer |
+
+Validation errors return 400, duplicate email 409, invalid credentials/session 401, disallowed origin/role 403 and throttled authentication 429, using the existing `{ error: { code, message } }` format. There is no private user lookup by caller-supplied ID in this phase.
+
+Create a development administrator explicitly (no built-in admin account or password):
+
+```powershell
+# Run migrations/start services first. Choose a fresh email and a password of at least 12 characters.
+$env:ADMIN_SEED_EMAIL='admin@example.test'
+$adminPassword = Read-Host 'Development admin password' -AsSecureString
+$env:ADMIN_SEED_PASSWORD = [System.Net.NetworkCredential]::new('', $adminPassword).Password
+try {
+  docker compose exec -T -e ADMIN_SEED_EMAIL -e ADMIN_SEED_PASSWORD server npm run db:seed-admin
+} finally {
+  Remove-Item Env:ADMIN_SEED_EMAIL, Env:ADMIN_SEED_PASSWORD
+  $adminPassword = $null
+}
+```
+
+The command requires NODE_ENV=development or test, hashes the supplied password and inserts a new admin. Existing emails cause an error without promotion or password replacement. It is disabled in production. Admin CRUD remains Phase 7. Password reset, email verification, password changes and deployment hardening are not included in Phase 3.
+
+Security references: [OWASP session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [OWASP CSRF prevention](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+
+Phase 3 acceptance on 2026-11-04:
+
+- `npm test --prefix server`: 3/3 passed.
+- `npm run build --prefix client`: passed.
+- `docker compose up --build -d --wait`: passed; additive migrations applied and application services healthy.
+- `docker compose --profile test run --build --rm test`: 21/21 passed against isolated real MySQL. Includes registration, concurrent duplicate emails, hashing, profile isolation, role escalation rejection, admin access, invalid credentials, session rotation/expiry/logout, persistent sessions across API instances, CSRF rejection, development admin seeding, production seed guard, rate limiting and existing catalog checks.
+- `npm run test:e2e --prefix client`: 4/4 passed in Edge. Covers signup, profile edit/reload, incorrect/correct login, logout, duplicate email, customer admin denial, session-check failure/retry and the existing catalog scenarios. Browser acceptance creates unique `e2e-...@example.test` customer records in the selected application database; it does not modify existing accounts or vehicles.
+- Desktop/mobile account screenshots reviewed; 390 px mobile layout has no horizontal overflow. Screenshots are under ignored `client/test-results/`.
+- Initial sandboxed local test/build attempts failed with spawn EPERM; the same checks passed with execution permission. Test results above reflect the successful runs.
+
+Phase 3 was completed before the Phase 4 work recorded below. The application runs at http://localhost:5173.
+
+### Phase 4 — Date-based availability and alternatives
+
+Open any car detail page, choose pickup/return dates and select Check dates. The public API reads actual reservation intervals from MySQL; availability is never stored as a global car flag. Date changes cancel pending requests and clear previous results. When a car is unavailable, the page displays up to six available alternatives with their category, daily price difference, seat difference and transmission match. Following an alternative carries the selected dates in the hash URL and rechecks them, including after reload. Empty recommendations are displayed honestly without fallback vehicles.
+
+Dates are calendar days in Europe/Istanbul. The accepted format is strict YYYY-MM-DD with real calendar dates, pickup no earlier than today's Istanbul date and return strictly after pickup. Pickup is inclusive and return is exclusive: an existing reservation overlaps exactly when `existing.start_date < requested.endDate AND existing.end_date > requested.startDate`. Therefore a reservation ending on the next pickup day does not block it. No maximum rental duration is imposed in this phase; dates must fit the MySQL DATE range. These are date-only rentals, without pickup/return times.
+
+Migration `005-reservations.sql` adds the interval foundation: user/car foreign keys, start/end DATE columns, a database check requiring start < end, status and an overlap index. Pending and confirmed reservations block availability; cancelled and completed reservations do not. Pending records intentionally block without automatic expiry. Maintenance vehicles are always unavailable; inactive/missing vehicles return 404. This migration preserves existing accounts, sessions, cars and prices. Development seed data adds no reservations, so active demo vehicles are available until real records exist; overlap fixtures are confined to the isolated integration database.
+
+| Method | Endpoint | Result |
+|---|---|---|
+| GET | `/api/cars/:id/availability?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` | `{ carId, startDate, endDate, available, reason }`; reason is null, reserved or maintenance |
+| GET | `/api/cars/alternatives?carId=ID&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` | `{ carId, startDate, endDate, ranking, items }`; up to six car summaries with match metadata |
+
+Both endpoints are public, parameterized and return Cache-Control: no-store. Missing/invalid dates or IDs, repeated parameters and unknown keys return 400. Missing/inactive source cars return 404. Private reservation/user identifiers and customer details are never returned.
+
+Alternative selection excludes the source, maintenance/inactive cars and all cars overlapping the exact requested interval. Ranking is lexicographic: same category first, then absolute daily price difference (SQL DECIMAL, returned as a two-decimal string), absolute seat difference, same transmission, and car ID as a deterministic tie-breaker. Category preference takes precedence over a closer price in another category. Seat count is a proximity preference, not a minimum-capacity filter. Fuel is displayed but does not affect ranking. The source may itself be available; the alternatives endpoint still lists other eligible vehicles.
+
+This phase performs read-only availability checks. It creates no bookings, holds or payment records and does not guarantee that a vehicle remains available after the check. Phase 5 will add authenticated booking creation, server-side pricing, history/cancellation and a tested transaction/locking strategy to prevent concurrent double booking. There is no public reservation-write endpoint in Phase 4.
+
+Phase 4 acceptance on 2026-11-04:
+
+- `npm test --prefix server`: 6/6 passed, including leap dates, strict date validation and the Istanbul midnight boundary.
+- `npm run build --prefix client`: passed.
+- `docker compose --profile test run --build --rm test`: 30/30 passed against isolated real MySQL. Nine new integration cases cover every overlap shape, adjacent intervals, blocking statuses, inactive/maintenance behavior, strict API input checks, private-data exclusion, deterministic ranking, exact-range eligible alternatives, empty recommendations and database constraints. Existing account/catalog tests also pass.
+- `npm run test:e2e --prefix client`: 7/7 passed in Edge. Real availability and alternative API calls, date validation, date preservation across navigation/reload, loading/error/retry, clearing stale results and mobile layout are covered. Reserved/maintenance and empty-result UI states are simulated in the browser to avoid inserting development bookings; actual database overlaps and status behavior are verified by the integration suite.
+- Desktop/mobile alternative screenshots reviewed under ignored `client/test-results/`; 390 px layout has no horizontal overflow.
+- The first integration run found an excessively long decimal scale in daily price differences (29/30 passed). Explicit SQL DECIMAL casts corrected it; the complete rerun passed 30/30.
+- `docker compose up --build -d --wait`: passed; database, API and client healthy. `git diff --check`: passed. Existing development data was preserved.
+
+Only Phase 4 was added in this step. Phase 5 remains pending.
 
 ## 0. Project contract
 
@@ -269,17 +350,13 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 - Admin: create/read/update/deactivate cars, update prices, manage bookings and permitted customer profile fields; authorization tests.
 - Docker: fresh startup and data persistence across restart, secrets excluded from repo.
 
-## 6. Agent execution prompt (copy into coding agent)
-
-> You are the implementation agent for SmartRent. Read `README.md`, inspect the current repository, and implement **only the next incomplete phase**. Before coding, state which phase and requirements you are targeting, planned files, database changes, and acceptance checks. Follow the engineering rules and course stack strictly. Implement minimal coherent functionality, add tests, run them (including Docker if available), update README and progress tracking, and finish by reporting exactly which acceptance checks passed/failed with commands used. Do not fake test results, overwrite unrelated files, add real payment capture, skip server authorization, or claim a booking concurrency guarantee without a tested database strategy. Stop after completing the phase and await the next explicit task.
-
-## 7. Delivery progress tracker
+## 6. Delivery progress tracker
 
 - [x] P0 Requirements and architecture documented
 - [x] P1 Docker/dev environment operational
 - [x] P2 Catalog with real DB data
-- [ ] P3 Accounts and secure roles
-- [ ] P4 Availability and alternatives
+- [x] P3 Accounts and secure roles
+- [x] P4 Availability and alternatives
 - [ ] P5 Booking and concurrency safety
 - [ ] P6 Simulated payments and loyalty
 - [ ] P7 Admin management CRUD

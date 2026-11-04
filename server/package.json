@@ -10,9 +10,10 @@
     "dev": "node --watch --env-file-if-exists=../.env src/index.js",
     "start": "node --env-file-if-exists=../.env src/index.js",
     "test": "node --test test/*.test.js",
-    "test:integration": "node --test integration/*.test.js",
+    "test:integration": "node --test --test-concurrency=1 integration/*.test.js",
     "db:migrate": "node --env-file-if-exists=../.env scripts/database.js migrate",
-    "db:seed": "node --env-file-if-exists=../.env scripts/database.js seed"
+    "db:seed": "node --env-file-if-exists=../.env scripts/database.js seed",
+    "db:seed-admin": "node --env-file-if-exists=../.env scripts/seed-admin.js"
   },
   "dependencies": {
     "cors": "2.8.6",

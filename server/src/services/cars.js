@@ -43,8 +43,8 @@ export function parseFilters(query) {
   return filters;
 }
 
-const fields = 'id, brand, model, category, seats, transmission, fuel_type, daily_price, image_url, status';
-function toCar(row) {
+export const fields = 'id, brand, model, category, seats, transmission, fuel_type, daily_price, image_url, status';
+export function toCar(row) {
   return { id: row.id, brand: row.brand, model: row.model, category: row.category, seats: row.seats,
     transmission: row.transmission, fuelType: row.fuel_type, dailyPrice: row.daily_price,
     currency: 'TRY', imageUrl: row.image_url, status: row.status };

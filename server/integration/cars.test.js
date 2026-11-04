@@ -9,6 +9,7 @@ if (process.env.DB_NAME !== 'smartrent_test' || process.env.NODE_ENV !== 'test')
 let server, base;
 before(async () => {
   await migrate(pool);
+  await pool.query('DELETE FROM reservations');
   await pool.query('DELETE FROM cars'); // Guard above restricts cleanup to the isolated test DB.
   await seed(pool);
   server = createApp(pool).listen(0, '127.0.0.1');
@@ -30,7 +31,7 @@ test('migrations and seed can run twice without duplicates or overwriting edited
   const detail = await get(`/${await id('DEMO-01')}`);
   assert.equal(detail.body.dailyPrice, '1234.56');
   const [[versions]] = await pool.query('SELECT COUNT(*) AS total FROM schema_migrations');
-  assert.equal(versions.total, 1);
+  assert.equal(versions.total, 4);
   await pool.execute('UPDATE cars SET daily_price = ? WHERE vehicle_code = ?', ['1000.00', 'DEMO-01']);
 });
 test('catalog reads only active MySQL rows and returns decimal prices', async () => {

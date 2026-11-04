@@ -25,7 +25,7 @@ export default function Catalog() {
     <div className="catalog-layout"><aside aria-label="Car filters"><CarFilters filters={filters} onChange={setFilters} onSubmit={() => setQuery({ ...filters, page: 1 })} onReset={reset} /></aside>
       <section className="results" aria-labelledby="results-heading" aria-busy={loading}>
         <div className="results-heading"><h2 id="results-heading">Car collection</h2><span role="status">{loading ? 'Loading…' : error ? 'Request error' : `${result?.total ?? 0} ${result?.total === 1 ? 'car' : 'cars'}`}</span></div>
-        <p className="availability-note">Daily list prices. Date-based availability and booking are not available yet.</p>
+        <p className="availability-note">Daily list prices. Open a car to check availability for your pickup and return dates.</p>
         {loading ? <div className="state-panel" role="status">Loading cars…</div> : error ? <div className="state-panel" role="alert"><h3>Unable to display cars</h3><p>{error}</p><button onClick={() => setRetry(value => value + 1)}>Try again</button></div> : result?.items.length ? <><CarGrid cars={result.items} />{result.total > result.pageSize && <nav className="pagination" aria-label="Catalog pages"><button disabled={query.page === 1} onClick={() => setQuery({ ...query, page: query.page - 1 })}>Previous</button><span>Page {query.page} / {Math.ceil(result.total / result.pageSize)}</span><button disabled={query.page * result.pageSize >= result.total} onClick={() => setQuery({ ...query, page: query.page + 1 })}>Next</button></nav>}</> : <div className="state-panel"><h3>No cars match your filters</h3><p>Try a wider price range or a different car category.</p><button onClick={reset}>Clear filters</button></div>}
       </section>
     </div>
