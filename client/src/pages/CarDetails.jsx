@@ -7,6 +7,7 @@ export default function CarDetails({ id, initialStart = '', initialEnd = '' }) {
   const [car, setCar] = useState(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  useEffect(() => { if (car) document.title = `${car.brand} ${car.model} | SmartRent`; }, [car]);
   useEffect(() => {
     const controller = new AbortController();
     setCar(null); setError('');

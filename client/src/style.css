@@ -137,6 +137,13 @@ button:disabled { opacity: .6; cursor: wait; }
 .status-paid, .status-confirmed { background: #e9eee2; }
 .status-failed, .status-refunded { background: #f1ece6; }
 .activity-record p { overflow-wrap: anywhere; }
+.error-boundary { margin: 30px auto; max-width: 760px; }
+.error-boundary .action-buttons { justify-content: center; align-items: center; }
+.error-boundary a { text-decoration: underline; padding: 12px; }
+.detail-link { display: inline-flex; align-items: center; min-height: 44px; }
+.state-panel button, .pagination button, .nav-button { min-height: 44px; }
+.car-brand, .specs, .hero-copy, .availability-note, footer p, footer > span { color: #596c5d; }
+@media (max-width:700px) { input, select { font-size: 16px; } .topbar { height: auto !important; min-height: 100px; } }
 .admin-page { padding: 45px 0 70px; min-height: 70vh; }
 .admin-page h1 { font-size: clamp(32px,5vw,48px); }
 .admin-page > p { font-size: 14px; line-height: 1.7; }

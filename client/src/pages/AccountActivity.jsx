@@ -1,24 +1,13 @@
-import { useEffect, useState } from 'react';
-import { api } from '../services/api.js';
+import { useState } from 'react';
+import useApiResource from '../hooks/useApiResource.js';
 import { price } from '../utils/cars.js';
 
 export default function AccountActivity({ loyalty = false }) {
-  const [result, setResult] = useState(null);
   const [page, setPage] = useState(1);
-  const [retry, setRetry] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true); setError('');
-    api.get(loyalty ? '/loyalty/mine' : '/payments/mine', { params: { page, pageSize: 10 }, signal: controller.signal }).then(({ data }) => { if (!controller.signal.aborted) setResult(data); }).catch(failure => {
-      if (!controller.signal.aborted) setError(failure.response?.data?.error?.message || 'Unable to load your activity.');
-    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [loyalty, page, retry]);
+  const { data: result, error, loading, refetch } = useApiResource(loyalty ? '/loyalty/mine' : '/payments/mine', { page, pageSize: 10 }, 'Unable to load your activity.');
   return <section className="bookings-page"><p className="eyebrow">YOUR SMARTRENT ACCOUNT</p><h1>{loyalty ? 'Loyalty points' : 'My payments'}</h1>
     <p>{loyalty ? 'Earn 1 point per 100 TRY on paid rentals, once completed on or after the return date. Refunds reverse the earned points. Points have no cash value.' : 'All payments and refunds shown here are simulated. No real money is charged. Payment attempts are made from My bookings.'}</p>
-    {loading ? <p role="status">Loading activity…</p> : error ? <div className="state-panel" role="alert"><p>{error}</p><button onClick={() => setRetry(value => value + 1)}>Try again</button></div> : result && <>
+    {loading ? <p role="status">Loading activity…</p> : error ? <div className="state-panel" role="alert"><p>{error}</p><button onClick={refetch}>Try again</button></div> : result && <>
       {loyalty && <div className="loyalty-balance" role="status"><span>Available points</span><strong>{BigInt(result.balance).toLocaleString('en-GB')}</strong></div>}
       {result.items.length ? <div className="booking-list">{result.items.map(item => <article className="booking-record activity-record" key={item.id}>
         <div><p className="eyebrow">RESERVATION #{item.reservationId}</p><h2>{loyalty ? item.reason === 'earned' ? 'Rental points earned' : 'Refund points reversal' : item.carName}</h2>

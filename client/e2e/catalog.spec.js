@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 test('real catalog filters, detail navigation and mobile layout', async ({ page }) => {
+  const expectedCount = (await (await page.request.get('/api/cars')).json()).items.length;
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('The right carfor every journey.');
-  await expect(page.locator('.car-card')).toHaveCount(10);
+  await expect(page.locator('.car-card')).toHaveCount(expectedCount);
   await page.getByLabel('Car category', { exact: true }).selectOption('suv');
   await page.getByLabel('Transmission', { exact: true }).selectOption('automatic');
   await page.getByLabel('Minimum seats').fill('7');
@@ -20,7 +21,7 @@ test('real catalog filters, detail navigation and mobile layout', async ({ page 
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('5008');
   await page.getByRole('link', { name: 'Back to the catalog' }).click();
-  await expect(page.locator('.car-card')).toHaveCount(10);
+  await expect(page.locator('.car-card')).toHaveCount(expectedCount);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.getByRole('button', { name: 'Show cars' })).toBeVisible();
@@ -28,11 +29,12 @@ test('real catalog filters, detail navigation and mobile layout', async ({ page 
   await page.getByRole('button', { name: 'Show cars' }).click();
   await expect(page.getByRole('heading', { name: 'No cars match your filters' })).toBeVisible();
   await page.getByRole('button', { name: 'Clear filters' }).click();
-  await expect(page.locator('.car-card')).toHaveCount(10);
+  await expect(page.locator('.car-card')).toHaveCount(expectedCount);
   expect(errors).toEqual([]);
 });
 
 test('loading, error, retry, validation and missing detail states', async ({ page }) => {
+  const expectedCount = (await (await page.request.get('/api/cars')).json()).items.length;
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   await page.route('**/api/cars?*', async route => { await gate; await route.fulfill({ status: 503, json: { error: { message: 'Test connection error' } } }); });
@@ -42,7 +44,7 @@ test('loading, error, retry, validation and missing detail states', async ({ pag
   await expect(page.getByRole('alert')).toContainText('Test connection error');
   await page.unroute('**/api/cars?*');
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('.car-card')).toHaveCount(10);
+  await expect(page.locator('.car-card')).toHaveCount(expectedCount);
   await page.getByLabel('Minimum price', { exact: true }).fill('2000');
   await page.getByLabel('Maximum price', { exact: true }).fill('1000');
   await page.getByRole('button', { name: 'Show cars' }).click();

@@ -1,17 +1,19 @@
-# Working application — Phase 7
+# SmartRent — Phase 8 delivery
 
 Catalog, accounts, date-based availability, reservations, simulated payments and loyalty activity use MySQL. Customers can register, sign in/out, edit their profile, create/cancel bookings, simulate payment, complete eligible rentals and view their own payment/points history. Guests can check rental dates and see available alternatives before signing in. Administrators manage vehicles, reservation statuses, customer contact details and simulated refunds through a protected dashboard. All payments are simulated, with no card collection or real charges. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
 
 The interface, accessibility labels, API messages and documentation are in English. Prices use English number formatting; the currency remains TRY.
 
-English-language update verified on 2026-11-03: server tests (3/3), client build and Edge browser scenarios (2/2) passed. Browser checks include the English document language, heading, filters, detail view, empty/error states and mobile layout. Docker services were rebuilt with the translated application.
+Delivery verification on 2026-11-05: 11 server tests, 71 real-MySQL integration tests, 21 Edge browser scenarios and the client build passed. A separate fresh Docker installation also passed the full real demo and restart-persistence checks. Earlier phase acceptance records below are historical.
+
+Quick links: [Setup](#setup-and-startup), [demo preparation](#prepare-the-demo), [presentation walkthrough](#presentation-walkthrough), [architecture](#architecture), [API reference](#4-implemented-api-contract), [course concept audit](#course-concept-audit), [verification](#phase-8--quality-demo-and-delivery), [limitations](#delivery-limitations).
 
 ## Setup and startup
 
 Requires Node.js 24, npm and Docker Desktop with Linux containers. For a new checkout:
 
 ```powershell
-Copy-Item .env.example .env
+if (-not (Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
 # Replace the example database passwords in .env.
 docker compose up --build -d --wait
 docker compose exec -T server npm run db:seed
@@ -21,9 +23,82 @@ Do not overwrite an existing local .env file. Application: http://localhost:5173
 
 Data is stored in the mysql_data volume. `down -v` deletes data and must not be used for updates. Migrations run automatically when the server starts; seeding requires an explicit command. Dependency versions are pinned in package.json and lockfiles.
 
+### Prepare the demo
+
+Run the application and base vehicle seed above first. Choose a demo-only password of 12–128 characters; no account passwords are stored in this repository. The following explicit command creates two new accounts, three dedicated vehicles and synthetic historical/future reservations. It is disabled in production.
+
+```powershell
+$taskDemoPassword = Read-Host 'Choose demo password' -AsSecureString
+$env:DEMO_PASSWORD = [System.Net.NetworkCredential]::new('', $taskDemoPassword).Password
+try {
+  docker compose exec -T -e DEMO_PASSWORD server npm run db:seed-demo
+} finally {
+  Remove-Item Env:DEMO_PASSWORD
+  $taskDemoPassword = $null
+}
+```
+
+Sign in using `demo.customer@example.test` or `demo.admin@example.test` with the password you chose. Optional DEMO_CUSTOMER_EMAIL/DEMO_ADMIN_EMAIL environment variables may be forwarded with `-e` to use different fresh addresses. Existing accounts are never promoted, reset or overwritten. The script refuses partial email/vehicle-code collisions and wrong credentials; repeating it with the same accounts/password preserves edits, history and points instead of adding duplicates. It deliberately does not reset the demo after use. For a completely fresh demonstration, use a separate Compose project/database.
+
+| Fixture | Starting behavior |
+|---|---|
+| P8-DEMO-AVAILABLE / SmartRent Demo Daytrip | Active car with two completed historical rentals and one returned, paid confirmed rental ready for completion. |
+| P8-DEMO-RESERVED / SmartRent Demo Reserved | Active car blocked from Istanbul today + 2 through today + 5 by a pending reservation. |
+| P8-DEMO-MAINT / SmartRent Demo Workshop | Maintenance car; unavailable regardless of selected dates. |
+| Demo customer | Four bookings, paid/refunded/pending payments and a 20-point starting balance including a reversal. Completing the eligible returned rental adds 20 points once, producing 40. |
+
+The seed prints vehicle IDs and actual rental dates. Dates are calculated on the first seed run and remain unchanged on later runs. Historical dates are inserted only by this guarded development command; normal booking/completion APIs keep all date/payment checks. The base seed alone adds no reservations; the optional demo seed adds two active cars, so browser tests use the live first-page count rather than assuming exactly ten vehicles.
+
+### Presentation walkthrough
+
+1. As a guest, browse the catalog and search for SmartRent Demo Reserved. Open it and select the blocked dates printed by the seed; show real unavailability and ranked alternatives.
+2. Follow SmartRent Demo Daytrip in the alternative list. Show that dates are preserved, then sign up as a fresh customer through Sign in to book. Review the server quote and create a reservation.
+3. In My bookings, simulate a failed payment, then a successful one. Show the confirmed reservation and persisted Payments history. Future rentals do not earn points yet.
+4. Sign out and sign in as the seeded demo customer. Open My bookings and complete the returned paid rental. Show Loyalty: the balance rises from 20 to 40 and the earlier refund reversal remains visible. Do not claim that a future booking can complete early.
+5. Sign in as the demo administrator. Search the visitor in Reservations, show the saved amount, and change the Daytrip car's price. Its existing reservation amount remains unchanged.
+6. Cancel the visitor's reservation in admin and show the simulated refund in Payments. Edit the visitor's phone in Customers. Demonstrate that a car with an unresolved upcoming booking cannot be deactivated.
+7. Show that customer accounts cannot open admin pages/API resources. Finish with the test commands and the remaining deployment limitations below.
+
+### Architecture
+
+```mermaid
+flowchart LR
+  Browser[Browser: React + hash routes] -->|Axios /api + HttpOnly cookie| Vite[Vite development server :5173]
+  Vite -->|proxy| API[Express API :3000]
+  API --> Auth[Authentication + role + Origin/header checks]
+  Auth --> Services[Catalog / reservation / payment / admin services]
+  Services -->|parameterized SQL and transactions| MySQL[(MySQL 8.4)]
+  MySQL --> Volume[mysql_data persistent volume]
+  Browser --> Recovery[Page error boundary + request retry states]
+```
+
+The client never connects directly to MySQL. Routes validate input and sessions; services enforce owner/admin scope, prices, end-exclusive availability and payment/loyalty transitions. Car-row locks serialize booking, cancellation, admin status and payment operations. Price snapshots preserve historical amounts; points are an append-only credit/reversal ledger. Separate test-db tmpfs storage protects development data. The optional fresh-install checker uses a generated Compose project with its own ports, credentials and volume.
+
+### Course concept audit
+
+| Concept | Concrete implementation |
+|---|---|
+| ES modules, destructuring, spread, async/await | Route/service modules, controlled form updates, async Axios/SQL operations. |
+| JSX, components, props and map | CarGrid/CarCard, form editors and mapped booking/payment/admin records. |
+| Controlled forms and events | CarFilters, AuthPage, Availability, CarEditor and CustomerEditor. |
+| useState and derived state | Filters, page selection, busy/error messages, role guards and eligible booking actions. |
+| useEffect and cleanup | Hash navigation, session restoration and aborted GET requests. |
+| useContext | AuthContext shares the current session with navbar, guards and booking controls. |
+| Custom hooks / useCallback | useApiResource is shared by catalog, bookings and account activity; it owns GET loading/error/retry/cancellation. |
+| useRef | In-flight submission guards, request UUIDs, route focus and DOM error-panel focus. |
+| Error boundary | ErrorBoundary catches render failures while explicit try/catch handles network and write failures. |
+| Axios / Express / MySQL CRUD | Typed-by-validation JSON contracts, route middleware, parameterized queries, transactions and soft-deactivation. |
+| Testing | node:test with real isolated MySQL, Playwright browser flows and fresh Docker/persistence acceptance. |
+
+Course slides were not supplied, so exact slide alignment remains unverified. useMemo/useCallback were not added merely to demonstrate APIs; the existing component/service structure was retained and only repeated GET logic was consolidated. Error-boundary behavior follows [React's component reference](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary). Keyboard focus work follows the [W3C focus-order guidance](https://www.w3.org/WAI/WCAG22/Understanding/focus-order.html).
+
+### Delivery limitations
+
+This is a locally runnable course/demo application, not a production payment gateway. Docker serves the Vite development server; HTTPS/reverse-proxy deployment, distributed authentication throttling, password reset/email verification, real money/refunds, point redemption, background completion/expiry and production observability are not included. Pending bookings intentionally hold dates without automatic expiry. Rentals use date-only Europe/Istanbul calendar days. Illustrative vehicle SVGs remain. Hash-based URLs remain intentional. Accessibility checks cover labels, keyboard/focus, error recovery and responsive layout; no formal WCAG certification is claimed.
+
 ### Schema and seed data
 
-`database/migrations/002-cars.sql` creates the cars table: unique vehicle_code, brand/model/category, seats/transmission/fuel, DECIMAL(12,2) daily price, image path, and active/maintenance/inactive status. Prices cannot be negative; seats must be between 1 and 20. There is no global available field. Users/sessions are introduced in 003/004 and the reservation interval foundation in 005; payments remain a later phase.
+`database/migrations/002-cars.sql` creates the cars table: unique vehicle_code, brand/model/category, seats/transmission/fuel, DECIMAL(12,2) daily price, image path, and active/maintenance/inactive status. Prices cannot be negative; seats must be between 1 and 20. There is no global available field. Users/sessions are introduced in 003/004, reservation intervals/prices in 005/006 and payments/attempts/loyalty in 007–009. Phase 8 adds no schema migration.
 
 The existing schema_version bootstrap table is preserved. The schema_migrations table tracks new migrations by filename and SHA-256 checksum. A lock serializes concurrent migration runs. Line endings are normalized; changing an applied file causes an error. Since MySQL DDL auto-commits, each migration must contain one restart-safe SQL statement. Future changes use new files; there is no automatic rollback or volume reset.
 
@@ -294,7 +369,42 @@ Phase 7 acceptance on 2026-11-05:
 - Desktop/mobile dashboard, car editor and payment screenshots reviewed under ignored `client/test-results/`; 390 px checks found no horizontal overflow.
 - `docker compose up --build -d --wait`: passed with application services healthy. The API was restarted before final browser acceptance to clear accumulated development login attempts; authentication limits were not changed and database data/sessions were preserved. `git diff --check`: passed.
 
-Only Phase 7 was added in this step. Phase 8 quality/demo audit remains pending.
+Phase 7 was completed before the Phase 8 implementation below.
+
+### Phase 8 — Quality, demo and delivery
+
+The UI now has root/page React error boundaries with a safe recovery message, a reload action and catalog recovery while navigation remains available. Event handlers/network writes keep their explicit error handling and are never automatically replayed. The shared useApiResource hook centralizes cancelable GET loading/error/retry in Catalog, MyBookings and AccountActivity, suppressing responses from cancelled/old requests. It is intentionally not a write abstraction.
+
+Hash navigation updates document titles and moves keyboard focus to main after navigation. The skip link focuses main without changing the current route/hash. Admin image controls have an explicit label/description; mobile form controls use readable text, common actions have 44 px targets, and secondary text contrast was strengthened. Both localhost and 127.0.0.1 development origins remain supported. Existing price, role, CSRF, pending-expiry and end-exclusive date policies are unchanged.
+
+The demo seed and fresh-install checker above are part of the delivery. To run host browser checks, install client dependencies and Microsoft Edge. For server commands outside Docker, install server dependencies with npm ci as described under local development.
+
+```powershell
+npm ci --prefix client
+npm test --prefix server
+npm run build --prefix client
+docker compose --profile test run --build --rm test
+npm run test:e2e --prefix client
+docker compose --profile test stop test-db
+
+# Optional independent verification; default ports 5183 / 3013 / 3317 must be free.
+.\scripts\verify-fresh.ps1
+```
+
+The browser suite expects the base demo vehicles to remain present with their seeded attributes. It supports additional active vehicles from the optional demo seed. Browser runs create their own unique accounts/test histories and deactivate their own admin test cars. Repeated suites can reach the existing 30-attempt authentication limit; wait for its window or restart only the development API before a clean acceptance run. The limiter is not disabled by tests.
+
+verify-fresh.ps1 builds a generated smartrent-check-<random> project using temporary random credentials and a fresh volume, applies migrations/base/demo seeds and runs client/scripts/demo-acceptance.mjs against real APIs in Edge. It then recreates that isolated stack with the same volume, reruns the seed without resetting data and verifies accounts, saved price, booking/refund history and the 40-point ledger. Finally it removes only its generated containers/network/volume and temporary credential file, restores environment variables and keeps screenshots under ignored client/test-results/. It never tears down the main smartrent project or modifies its .env/data. Parameter overrides: -ClientPort, -ServerPort and -DbPort. Do not use volume deletion against your normal project for upgrades.
+
+Acceptance on 2026-11-05:
+
+- `npm test --prefix server`: 11/11 passed.
+- `npm run build --prefix client`: passed.
+- `docker compose --profile test run --build --rm test`: 71/71 passed; four additional demo-seed tests verify complete fixtures, repeat safety, collisions without promotion/password changes and the production guard.
+- `npm run test:e2e --prefix client`: 21/21 passed. Five new quality scenarios verify keyboard/title/focus, real render-boundary recovery, expired sessions, labelled 320/390 px forms and actual 127.0.0.1 browser origin handling, alongside all previous scenarios.
+- `.\scripts\verify-fresh.ps1`: passed on the separate smartrent-check-8c337a2a7a3e stack. Fresh installation, real unavailable-car alternatives, signup, reservation/payment, returned-rental completion, 40-point balance, admin price/contact/cancellation/refund and restart persistence all passed. No API state was mocked in this demo. Its temporary volume/network/containers were removed successfully.
+- Desktop/mobile screenshots and the real loyalty ledger were reviewed. `git diff --check` passed. Main application services remained healthy with existing data retained.
+
+All planned phases are implemented within the documented course/demo scope. Deployment limitations above remain explicit; no production-readiness claim is made.
 
 ## 0. Project contract
 
@@ -439,7 +549,7 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 
 **Exit criteria:** Full end-to-end demo: guest browses → customer registers → checks dates → unavailable car gives alternatives → books → simulated payment → rental history / loyalty shows → admin manages cars, reservations, pricing and customer profiles. New teammate can set up from README.
 
-## 4. Suggested API contract
+## 4. Implemented API contract
 
 | Method | Endpoint | Role | Purpose |
 |---|---|---|---|
@@ -450,19 +560,42 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 | GET | `/api/cars/alternatives` | public | date-specific alternatives |
 | POST | `/api/auth/register` | public | register |
 | POST | `/api/auth/login` | public | login |
-| POST | `/api/auth/logout` | authenticated | logout, depending on session implementation |
+| POST | `/api/auth/logout` | cookie session | idempotent logout; empty JSON |
 | GET/PATCH | `/api/me` | customer/admin | own profile |
 | POST | `/api/reservations` | customer | new booking |
 | GET | `/api/reservations/mine` | customer | own history |
-| PATCH | `/api/reservations/:id/cancel` | owner/admin | cancel eligible booking |
+| PATCH | `/api/reservations/:id/cancel` | owner | cancel eligible booking; automatic simulated refund |
+| PATCH | `/api/reservations/:id/complete` | owner | complete paid rental after return date; award points once |
+| GET | `/api/cars/:id/quote` | public | saved-rate review quote for startDate/endDate; no hold |
 | POST | `/api/payments/simulate` | owner | simulate payment |
 | GET | `/api/payments/mine` | customer | payment history |
 | GET | `/api/loyalty/mine` | customer | balance and ledger |
 | GET/POST | `/api/admin/cars` | admin | list/create |
-| PUT/PATCH/DELETE | `/api/admin/cars/:id` | admin | update/deactivate/remove |
-| GET/PATCH | `/api/admin/reservations` and `/:id` | admin | manage bookings |
-| GET/PATCH | `/api/admin/customers` and `/:id` | admin | manage profiles |
+| GET/PUT/PATCH/DELETE | `/api/admin/cars/:id` | admin | view/update/soft-deactivate |
+| GET | `/api/admin/reservations` | admin | search/list bookings |
+| PATCH | `/api/admin/reservations/:id` | admin | validated confirmed/cancelled/completed transition |
+| GET | `/api/admin/customers` and `/:id` | admin | search/list/view customer contacts |
+| PATCH | `/api/admin/customers/:id` | admin | update fullName/email/phone only |
 | GET | `/api/admin/payments` | admin | payment overview |
+| POST | `/api/admin/payments/:id/refund` | admin | full simulated refund; empty JSON |
+| GET | `/api/admin/access` | admin | current administrator profile |
+
+All paths use the /api prefix. Dates are strict YYYY-MM-DD; return is exclusive. Money and points are exact decimal strings. Public car detail returns a car object; most mutations return `{ user }`, `{ car }` or `{ reservation }`. Paginated lists return `{ items, page, pageSize, total }`; loyalty also returns balance. Errors use `{ error: { code, message } }`, with alternatives on CAR_UNAVAILABLE and a new quote on PRICE_CHANGED. Validation is 400, authentication 401, forbidden role/origin 403, absent/private resource 404, state/uniqueness conflict 409 and authentication throttle 429. Unexpected errors are generic 500 responses without database details.
+
+API tools must retain the HttpOnly session cookie and send Origin matching an allowed frontend plus X-Requested-With: SmartRent and Content-Type: application/json on writes. GETs do not accept caller-supplied user IDs to access another user's records. Account/admin/request field allowlists reject extra fields.
+
+Representative JSON bodies:
+
+```json
+{
+  "register": {"email":"new.customer@example.test","password":"your-chosen-12-plus-character-password","fullName":"Demo Visitor"},
+  "reservation": {"carId":1,"startDate":"2027-01-10","endDate":"2027-01-13","expectedDailyPrice":"1000.00"},
+  "simulatePayment": {"reservationId":1,"requestId":"c2c186ad-96cf-4d16-8491-a0cbef20189f","outcome":"paid"},
+  "adminReservation": {"status":"cancelled"}
+}
+```
+
+Choose future dates and actual IDs from your running app; static example IDs/dates are not a runnable fixture. Payment request IDs are caller-generated UUIDs; reuse the same key/outcome when retrying an uncertain attempt. Full per-phase sections above document filters, editable vehicle fields, lifecycle restrictions and response metadata.
 
 ## 5. Test matrix (must automate where practical)
 
@@ -485,6 +618,6 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 - [x] P5 Booking and concurrency safety
 - [x] P6 Simulated payments and loyalty
 - [x] P7 Admin management CRUD
-- [ ] P8 Full tests and demo documentation
+- [x] P8 Full tests and demo documentation
 
 Update this checklist only when the corresponding phase's acceptance checks have actually passed.
