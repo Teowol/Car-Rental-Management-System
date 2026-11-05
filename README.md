@@ -1,6 +1,6 @@
-# Working application — Phase 5
+# Working application — Phase 6
 
-Catalog, accounts, date-based availability and reservations use MySQL. Customers can register, sign in/out, edit their profile, create reservations and view/cancel their own bookings. Guests can check rental dates and see available alternatives before signing in. Administrator access is enforced by the API and demonstrated by a protected workspace. Payments and admin CRUD belong to later phases. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
+Catalog, accounts, date-based availability, reservations, simulated payments and loyalty activity use MySQL. Customers can register, sign in/out, edit their profile, create/cancel bookings, simulate payment, complete eligible rentals and view their own payment/points history. Guests can check rental dates and see available alternatives before signing in. Administrator access is enforced by the API; full admin management remains Phase 7. All payments are simulated, with no card collection or real charges. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
 
 The interface, accessibility labels, API messages and documentation are in English. Prices use English number formatting; the currency remains TRY.
 
@@ -86,7 +86,7 @@ Phase 2 acceptance results on 2026-11-03:
 - Desktop screenshot reviewed; browser tests confirmed no horizontal overflow at a 390 px mobile viewport.
 - `git diff --check`: passed. .env and test output remain excluded from Git; docs/ was not recreated.
 
-At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, and no payment workflow yet.
+At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, simulated payments and no full admin CRUD yet.
 
 ### Phase 3 — Accounts and role security
 
@@ -207,7 +207,50 @@ Phase 5 acceptance on 2026-11-04:
 - Desktop/mobile booking screenshots reviewed under ignored `client/test-results/`; the 390 px layout has no horizontal overflow.
 - `docker compose up --build -d --wait`: passed with all application services healthy; migrations preserve existing data. `git diff --check`: passed.
 
-Only Phase 5 was added in this step. Payments and loyalty remain Phase 6.
+Phase 5 was completed before the Phase 6 implementation below.
+
+### Phase 6 — Simulated payments and loyalty ledger
+
+My bookings now displays payment status and a payment reference. Pending rentals with a saved price can simulate a successful or failed payment, without entering card details. Success atomically marks the payment paid and the reservation confirmed. Failure leaves the reservation pending and blocking its dates, with a failed payment that can be retried. Successful payments and eligible cancellations are visible after reload in Payments (`#/payments`); Loyalty (`#/loyalty`) displays an exact point balance and chronological credit/reversal entries. Both activity pages have pagination, empty/loading/error/retry states and protected access.
+
+New additive, restart-safe migrations `007-payments.sql`, `008-payment-attempts.sql` and `009-loyalty-ledger.sql` add:
+
+- One payment per reservation, with saved amount/currency, fixed simulated method label, pending/paid/failed/refunded status, and paid/refunded timestamps.
+- Payment attempts with a unique (payment_id, request_id) key and paid/failed outcome. Request IDs are normalized UUID strings. No card fields exist, and unsupported request fields are rejected.
+- A loyalty ledger with signed BIGINT deltas and one earned/reversed entry per reservation. Balance is derived from SUM(points_delta), never a separately mutable balance.
+
+New bookings create a pending payment in the same transaction as the reservation and price snapshot. Existing priced reservations can lazily create their payment on first simulation; older unpriced intervals cannot pay. The amount comes from the immutable reservation snapshot, not a caller-supplied amount or today's car price. Payment can be attempted only for pending reservations before or on the pickup day in Europe/Istanbul. No automatic payment or money movement occurs.
+
+| Method | Endpoint | Behavior |
+|---|---|---|
+| POST | `/api/payments/simulate` | Owner only; reservationId, requestId UUID and outcome paid/failed. Returns `{ payment, replayed }`. |
+| GET | `/api/payments/mine?page=1&pageSize=10` | Owner's payment history, current statuses, saved amounts, timestamps and attempt counts. |
+| GET | `/api/loyalty/mine?page=1&pageSize=10` | Owner's balance and ledger entries as exact decimal integer strings. |
+| PATCH | `/api/reservations/:id/complete` | Owner only, empty JSON; completes a confirmed paid rental on/after the return date and awards points once. |
+| POST | `/api/admin/payments/:id/refund` | Admin only, empty JSON; full simulated refund and point reversal. Uses payment ID, not reservation ID. |
+
+List endpoints use the existing page validation (pageSize maximum 50). Payment and loyalty responses use Cache-Control: no-store. All writes reuse the exact-Origin/custom-header/JSON CSRF policy and session authentication. Other customers' reservation IDs return 404; payment and points history are always scoped to the signed-in owner. The narrow admin refund API belongs to the payment lifecycle; the admin payment overview, lookup interface and full management UI remain Phase 7.
+
+Idempotency: repeating an attempt's request ID and outcome returns the current payment without adding attempts or changing states; changing its outcome under the same key returns 409 REQUEST_REUSED. A new success request for an already paid payment returns its existing result without another charge/attempt. New attempts cannot regress paid/refunded records, and a replay after cancellation reports the current refunded status without restoring confirmation. A known failed attempt may be retried with a new UUID. The UI retains its UUID for uncertain responses while mounted and directs the customer to payment history on network failure; real payment processing is outside this project.
+
+Points policy: earn floor(saved paid amount in TRY / 100), once the paid rental is completed on or after its end-exclusive return date in Europe/Istanbul. Completing before the return date, completing unpaid/cancelled rentals, or completing refunded rentals returns 409 CANNOT_COMPLETE. The customer explicitly selects Complete rental and earn points when eligible; there is no background completion job. Retrying completion never duplicates credit. A zero-value/under-100 TRY rental earns a zero-point ledger entry. Points have no cash value and cannot be redeemed in this phase. All arithmetic uses BigInt and points are transmitted as strings to preserve large values.
+
+Cancellation retains the Phase 5 rule: only pending/confirmed rentals before their pickup date may be cancelled by their owner. In the same transaction it refunds paid payments, closes unattempted pending payments as failed, and reverses any existing points with an append-only negative entry. Failed payments remain failed. Repeating cancellation or refund is safe. For a completed paid rental, an administrator can issue a full simulated refund; its completed reservation remains historical and its points are reversed exactly once. For active rentals, admin refund also cancels the reservation and releases availability. Unpaid payments cannot be refunded. Partial refunds and real refund processing are not implemented.
+
+All payment, completion, refund and cancellation writes use the same READ COMMITTED transaction and car -> reservation -> payment/ledger lock order. Unique payment/attempt/ledger constraints provide an additional duplicate guard. Related changes commit or roll back together. Loyalty balance and page entries are read from one REPEATABLE READ snapshot, so a concurrent refund cannot produce mismatched balance/history within a response. Future admin status changes must use these lifecycle services and lock order; direct SQL writes can bypass application invariants. Locking-read behavior follows the [MySQL documentation](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html).
+
+Phase 6 acceptance on 2026-11-04:
+
+- `npm test --prefix server`: 9/9 passed, including exact point rounding and large amounts beyond Number precision.
+- `npm run build --prefix client`: passed.
+- `docker compose --profile test run --build --rm test`: 56/56 passed on isolated real MySQL. Thirteen new cases cover snapshot-priced payments, failed/retried attempts, request-key reuse, eight concurrent payment requests across two app instances, ownership/CSRF/forged-field rejection, legacy records, early/completed/zero-value point eligibility, parallel completion/refund, cancellation/payment races, point reversals and atomic rollback after injected failures.
+- `npm run test:e2e --prefix client`: 13/13 passed in the final full run. Real browser actions verify failed -> paid -> cancelled/refunded payment, persisted history and no early points, alongside all ten earlier scenarios. Completed/reversed ledger rendering is simulated in the browser; actual eligibility/credit/reversal logic is exercised by MySQL tests without changing development dates.
+- Initial full browser runs passed 12/13; a broad status locator matched both a notice and loading status. The test now targets the exact result notice; stale notices are also cleared when a new action starts. The new suite rerun passed 3/3.
+- Repeated browser runs then reached the existing per-process 30-attempt authentication limit. The API process was restarted without changing the limiter, and the clean full rerun passed 13/13. Persisted accounts, sessions, bookings and payments were preserved.
+- Payment/loyalty desktop and 390 px mobile screenshots reviewed under ignored `client/test-results/`; no horizontal overflow. Browser checks create unique test customers and cancel/refund their own real test bookings in cleanup.
+- `docker compose up --build -d --wait`: passed with application services healthy and existing data preserved. `git diff --check`: passed.
+
+Only Phase 6 was added in this step. Full admin management remains Phase 7.
 
 ## 0. Project contract
 
@@ -396,7 +439,7 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 - [x] P3 Accounts and secure roles
 - [x] P4 Availability and alternatives
 - [x] P5 Booking and concurrency safety
-- [ ] P6 Simulated payments and loyalty
+- [x] P6 Simulated payments and loyalty
 - [ ] P7 Admin management CRUD
 - [ ] P8 Full tests and demo documentation
 

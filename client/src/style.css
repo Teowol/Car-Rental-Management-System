@@ -127,6 +127,16 @@ footer p, footer>span { font-size: 11px; color: #788272; }
 button:disabled { opacity: .6; cursor: wait; }
 .skip-link { position: fixed; top: -100px; left: 20px; background: #fff; padding: 12px; z-index: 5; }
 .skip-link:focus { top: 10px; }
+.payment-actions { margin: 18px 0; border-top: 1px solid #dce2d8; padding-top: 8px; }
+.simulation-note { color: #596c5d; }
+.action-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.payment-actions [role="alert"] { color: #a12c26; }
+.loyalty-balance { display: grid; gap: 12px; max-width: 350px; margin: 30px 0; padding: 28px; border-radius: 12px; background: #e9eee2; }
+.loyalty-balance strong { font-size: 40px; font-weight: 500; overflow-wrap: anywhere; }
+.points-delta { font-size: 22px !important; }
+.status-paid, .status-confirmed { background: #e9eee2; }
+.status-failed, .status-refunded { background: #f1ece6; }
+.activity-record p { overflow-wrap: anywhere; }
 @media (min-width:1500px) { .car-visual { height: 195px; } }
 @media (max-width:1150px) { .car-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .catalog-layout { gap: 24px; grid-template-columns: 220px minmax(0,1fr); } .filters { padding: 17px; } .hero-mark { width: 230px; } }
 @media (max-width:700px) { .topbar { height: 76px; } .catalog-hero { padding: 40px 0; } .hero-mark { display: none; } .catalog-layout { grid-template-columns: 1fr; gap: 28px; } .filters { grid-template-columns: 1fr 1fr; gap: 16px; } .filter-heading, .primary-button { grid-column: 1/-1; } .results-heading h2 { font-size: 21px; } .car-grid { gap: 12px; } .car-body { padding: 15px 12px; } .car-visual { height: 145px; padding-left: 8px; padding-right: 8px; } .card-bottom { align-items: flex-start; flex-direction: column; gap: 13px; } .detail-layout { grid-template-columns: 1fr; gap: 30px; } .detail-visual { aspect-ratio: 1.6; } .detail-page h1 { font-size: 44px; } footer { flex-wrap: wrap; } footer>span { display: none; } }

@@ -31,7 +31,7 @@ test('migrations and seed can run twice without duplicates or overwriting edited
   const detail = await get(`/${await id('DEMO-01')}`);
   assert.equal(detail.body.dailyPrice, '1234.56');
   const [[versions]] = await pool.query('SELECT COUNT(*) AS total FROM schema_migrations');
-  assert.equal(versions.total, 5);
+  assert.equal(versions.total, 8);
   await pool.execute('UPDATE cars SET daily_price = ? WHERE vehicle_code = ?', ['1000.00', 'DEMO-01']);
 });
 test('catalog reads only active MySQL rows and returns decimal prices', async () => {

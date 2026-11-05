@@ -3,6 +3,7 @@ import cors from 'cors';
 import { carsRouter } from './routes/cars.js';
 import { accountRouter } from './routes/auth.js';
 import { reservationsRouter } from './routes/reservations.js';
+import { paymentsRouter } from './routes/payments.js';
 
 export function createApp(database) {
   const app = express();
@@ -21,6 +22,7 @@ export function createApp(database) {
 
   app.use('/api/cars', carsRouter(database));
   app.use('/api/reservations', reservationsRouter(database));
+  app.use('/api', paymentsRouter(database));
   app.use('/api', accountRouter(database));
   app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }));
   app.use((error, _req, res, _next) => {

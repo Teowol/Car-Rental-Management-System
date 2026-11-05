@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, requireTrustedWrite, validateBody } from '../services/auth.js';
-import { parseBooking, bookWithAlternatives, parsePages, listReservations, parseReservationId, cancelReservation } from '../services/reservations.js';
+import { parseBooking, bookWithAlternatives, parsePages, listReservations, parseReservationId, cancelReservation, readReservation } from '../services/reservations.js';
+import { completeRental } from '../services/payments.js';
 
 export function reservationsRouter(database) {
   const router = Router();
@@ -11,6 +12,12 @@ export function reservationsRouter(database) {
   router.patch('/:id/cancel', async (req, res) => {
     validateBody(req.body, []);
     res.json({ reservation: await cancelReservation(database, req.user.id, parseReservationId(req.params.id)) });
+  });
+  router.patch('/:id/complete', async (req, res) => {
+    validateBody(req.body, []);
+    const id = parseReservationId(req.params.id);
+    const completion = await completeRental(database, req.user.id, id);
+    res.json({ ...completion, reservation: await readReservation(database, id, req.user.id) });
   });
   return router;
 }

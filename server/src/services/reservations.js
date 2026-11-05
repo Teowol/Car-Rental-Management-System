@@ -1,6 +1,7 @@
 import { parseId, invalid, getCar } from './cars.js';
 import { parseDateRange, findAlternatives, businessToday } from './availability.js';
 import { authError, validateBody } from './auth.js';
+import { refundWithinTransaction } from './payments.js';
 
 function money(cents) { return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`; }
 export function calculatePrice(dailyPrice, range) {
@@ -23,14 +24,18 @@ export function parseBooking(body) {
 }
 const selectReservation = `SELECT r.id, r.car_id, r.user_id, DATE_FORMAT(r.start_date, '%Y-%m-%d') AS start_date,
   DATE_FORMAT(r.end_date, '%Y-%m-%d') AS end_date, r.status, c.brand, c.model,
-  p.daily_price, p.rental_days, p.total_amount, p.currency
-  FROM reservations r JOIN cars c ON c.id = r.car_id LEFT JOIN reservation_prices p ON p.reservation_id = r.id`;
+  p.daily_price, p.rental_days, p.total_amount, p.currency, pay.status AS payment_status, pay.id AS payment_id
+  FROM reservations r JOIN cars c ON c.id = r.car_id LEFT JOIN reservation_prices p ON p.reservation_id = r.id
+  LEFT JOIN payments pay ON pay.reservation_id = r.id`;
 function toReservation(row) {
   return { id: row.id, carId: row.car_id, carName: `${row.brand} ${row.model}`, startDate: row.start_date, endDate: row.end_date,
     status: row.status, canCancel: ['pending', 'confirmed'].includes(row.status) && row.start_date > businessToday(),
+    paymentStatus: row.payment_status || 'pending', paymentId: row.payment_id,
+    canPay: row.daily_price !== null && row.status === 'pending' && row.start_date >= businessToday() && !['paid', 'refunded'].includes(row.payment_status),
+    canComplete: row.status === 'confirmed' && row.end_date <= businessToday() && row.payment_status === 'paid',
     pricing: row.daily_price === null ? null : { dailyPrice: row.daily_price, rentalDays: row.rental_days, totalAmount: row.total_amount, currency: row.currency } };
 }
-async function readReservation(database, id, userId) {
+export async function readReservation(database, id, userId) {
   const [rows] = await database.execute(selectReservation + ' WHERE r.id = ? AND r.user_id = ?', [id, userId]);
   if (!rows.length) throw authError(404, 'RESERVATION_NOT_FOUND', 'Reservation not found.');
   return toReservation(rows[0]);
@@ -55,6 +60,7 @@ export async function createReservation(database, userId, booking) {
     const [insert] = await connection.execute('INSERT INTO reservations (user_id, car_id, start_date, end_date) VALUES (?, ?, ?, ?)', [userId, booking.carId, booking.startDate, booking.endDate]);
     id = insert.insertId;
     await connection.execute('INSERT INTO reservation_prices (reservation_id, daily_price, rental_days, total_amount) VALUES (?, ?, ?, ?)', [id, pricing.dailyPrice, pricing.rentalDays, pricing.totalAmount]);
+    await connection.execute('INSERT INTO payments (reservation_id, amount, currency) VALUES (?, ?, ?)', [id, pricing.totalAmount, pricing.currency]);
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -101,6 +107,7 @@ export async function cancelReservation(database, userId, id) {
       if (!['pending', 'confirmed'].includes(row.status) || row.start_date <= businessToday()) throw authError(409, 'CANNOT_CANCEL', 'Only pending or confirmed reservations before the pickup day can be cancelled.');
       await connection.execute("UPDATE reservations SET status = 'cancelled' WHERE id = ? AND user_id = ?", [id, userId]);
     }
+    await refundWithinTransaction(connection, id);
     await connection.commit();
   } catch (error) { await connection.rollback(); throw error; }
   finally { connection.release(); }
