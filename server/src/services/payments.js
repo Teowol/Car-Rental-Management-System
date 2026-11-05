@@ -9,7 +9,7 @@ function paymentValue(row) {
   return { id: row.id, reservationId: row.reservation_id, amount: row.amount, currency: row.currency,
     status: row.status, methodLabel: row.method_label, paidAt: row.paid_at, refundedAt: row.refunded_at };
 }
-async function readPayment(connection, reservationId) {
+export async function readPayment(connection, reservationId) {
   const [[row]] = await connection.execute(`SELECT ${paymentFields} FROM payments p WHERE p.reservation_id = ?`, [reservationId]);
   return row ? paymentValue(row) : null;
 }

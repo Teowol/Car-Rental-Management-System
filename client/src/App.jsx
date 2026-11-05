@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import Navbar from './components/layout/Navbar.jsx';
 import Catalog from './pages/Catalog.jsx';
 import CarDetails from './pages/CarDetails.jsx';
-import { AuthPage, ProfilePage, ProtectedPage, AdminPage } from './pages/Account.jsx';
+import { AuthPage, ProfilePage, ProtectedPage } from './pages/Account.jsx';
+import AdminPage from './pages/Admin.jsx';
 import MyBookings from './pages/MyBookings.jsx';
 import AccountActivity from './pages/AccountActivity.jsx';
 
@@ -26,7 +27,7 @@ export default function App() {
   else if (route === '#/bookings') content = <ProtectedPage><MyBookings /></ProtectedPage>;
   else if (route === '#/payments' || route === '#/loyalty') content = <ProtectedPage><AccountActivity key={route} loyalty={route === '#/loyalty'} /></ProtectedPage>;
   else if (route === '#/account') content = <ProtectedPage><ProfilePage /></ProtectedPage>;
-  else if (route === '#/admin') content = <ProtectedPage admin><AdminPage /></ProtectedPage>;
+  else if (/^#\/admin(?:\/(cars|customers|reservations|payments))?$/.test(route)) content = <ProtectedPage admin><AdminPage key={route} section={route.split('/')[2] || 'cars'} /></ProtectedPage>;
   else if (detail) content = <CarDetails key={route} id={detail[1]} initialStart={dateParams.get('startDate') || ''} initialEnd={dateParams.get('endDate') || ''} />;
   else if (route === '#/' || route === '#main') content = <Catalog />;
   else content = <section className="state-panel"><h1>Page not found</h1><a href="#/">Back to catalog</a></section>;

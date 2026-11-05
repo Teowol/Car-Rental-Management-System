@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
-import { api } from '../services/api.js';
 const failureMessage = error => error.response?.data?.error?.message || 'Unable to connect. Please try again.';
 export function ProtectedPage({ admin = false, children }) {
   const { user, loading, error, refresh } = useAuth();
@@ -62,13 +61,4 @@ export function ProfilePage() {
       <button className="primary-button" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
     </form>
   </section>;
-}
-export function AdminPage() {
-  const [state, setState] = useState({ loading: true });
-  useEffect(() => {
-    let active = true;
-    api.get('/admin/access').then(() => { if (active) setState({ loading: false }); }).catch(error => { if (active) setState({ error: failureMessage(error) }); });
-    return () => { active = false; };
-  }, []);
-  return <section className="account-page"><h1>Administrator workspace</h1>{state.loading ? <p role="status">Verifying access…</p> : state.error ? <p role="alert">{state.error}</p> : <><p>Your administrator access is verified.</p><p>Vehicle, reservation and customer management tools are coming soon.</p></>}</section>;
 }

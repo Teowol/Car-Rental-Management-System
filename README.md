@@ -1,6 +1,6 @@
-# Working application — Phase 6
+# Working application — Phase 7
 
-Catalog, accounts, date-based availability, reservations, simulated payments and loyalty activity use MySQL. Customers can register, sign in/out, edit their profile, create/cancel bookings, simulate payment, complete eligible rentals and view their own payment/points history. Guests can check rental dates and see available alternatives before signing in. Administrator access is enforced by the API; full admin management remains Phase 7. All payments are simulated, with no card collection or real charges. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
+Catalog, accounts, date-based availability, reservations, simulated payments and loyalty activity use MySQL. Customers can register, sign in/out, edit their profile, create/cancel bookings, simulate payment, complete eligible rentals and view their own payment/points history. Guests can check rental dates and see available alternatives before signing in. Administrators manage vehicles, reservation statuses, customer contact details and simulated refunds through a protected dashboard. All payments are simulated, with no card collection or real charges. Car images are local, illustrative SVG drawings. Project notes are maintained in this README; docs/ is not used.
 
 The interface, accessibility labels, API messages and documentation are in English. Prices use English number formatting; the currency remains TRY.
 
@@ -86,7 +86,7 @@ Phase 2 acceptance results on 2026-11-03:
 - Desktop screenshot reviewed; browser tests confirmed no horizontal overflow at a 390 px mobile viewport.
 - `git diff --check`: passed. .env and test output remain excluded from Git; docs/ was not recreated.
 
-At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, simulated payments and no full admin CRUD yet.
+At the start of Phase 2, all three Phase 1 services were healthy and the real database health check returned 200. The Phase 2 results above are historical; later acceptance results are recorded below. Known limitations: illustrative images, the Vite development server, simulated payments and the final Phase 8 quality/demo audit still pending.
 
 ### Phase 3 — Accounts and role security
 
@@ -96,7 +96,7 @@ New, additive migrations `003-users.sql` and `004-sessions.sql` create users and
 
 Sessions use random 32-byte tokens with an absolute eight-hour expiry. MySQL stores only SHA-256 token digests; the raw token is carried in an HttpOnly, SameSite=Strict, host-only cookie scoped to `/api`. Production adds Secure and requires HTTPS. Login/registration rotate the browser's previous session; logout deletes the database session and clears the cookie. Expired sessions are rejected on every request and cleaned up on login/registration. Multiple browser sessions are allowed. Roles are read from MySQL on every authenticated request, so role changes apply immediately.
 
-All account writes require JSON, an exact Origin matching CLIENT_ORIGIN, and `X-Requested-With: SmartRent`. This custom-header plus Origin policy protects login and authenticated writes against CSRF; the Axios client supplies the header and credentials automatically. API tools must send these headers too. CORS permits credentials only for the configured frontend origin. Account responses use Cache-Control: no-store. Login and registration share a bounded per-IP limit of 30 attempts per 15 minutes per API process; it resets on restart and is not a distributed production limiter.
+All account writes require JSON, an allowed exact Origin, and `X-Requested-With: SmartRent`. CLIENT_ORIGIN defines the frontend origin. In development/test, a configured localhost or 127.0.0.1 origin also permits the other loopback hostname with the same scheme and port, so both http://localhost:5173 and http://127.0.0.1:5173 work. CORS and write protection share this same allowlist; other hosts, schemes and ports remain blocked. Production permits only the explicitly configured origin. This custom-header plus Origin policy protects login and authenticated writes against CSRF; the Axios client supplies the header and credentials automatically. API tools must send these headers too. Cookies remain host-only, so switching between localhost and 127.0.0.1 requires signing in again. Account responses use Cache-Control: no-store. Login and registration share a bounded per-IP limit of 30 attempts per 15 minutes per API process; it resets on restart and is not a distributed production limiter.
 
 | Method | Endpoint | Behavior |
 |---|---|---|
@@ -250,7 +250,51 @@ Phase 6 acceptance on 2026-11-04:
 - Payment/loyalty desktop and 390 px mobile screenshots reviewed under ignored `client/test-results/`; no horizontal overflow. Browser checks create unique test customers and cancel/refund their own real test bookings in cleanup.
 - `docker compose up --build -d --wait`: passed with application services healthy and existing data preserved. `git diff --check`: passed.
 
-Only Phase 6 was added in this step. Full admin management remains Phase 7.
+Phase 6 was completed before the Phase 7 implementation below.
+
+### Phase 7 — Administrator dashboard and management
+
+Sign in with an administrator account and open `#/admin`. The dashboard has Cars, Reservations, Customers and Payments sections at `#/admin/cars`, `#/admin/reservations`, `#/admin/customers` and `#/admin/payments`; deep links and reloads work. Use the development-only admin seed instructions in Phase 3 to create your own admin credentials. Public registration still creates customers only. No built-in password, production bypass or role-editing screen was added.
+
+All dashboard endpoints independently enforce session authentication, current administrator role, no-store caching, and the existing Origin/JSON/custom-header CSRF policy. Customers receive 403 and anonymous users 401 before resources can be read or changed. Page guards also display sign-in/access-denied states. Admin mutations validate strict field allowlists and use parameterized SQL. The dashboard includes loading/error/retry, search, status filters, pagination and explicit confirmation for deactivation, reservation status changes and refunds.
+
+| Method | Endpoint | Behavior |
+|---|---|---|
+| GET/POST | `/api/admin/cars` | List all statuses / create a vehicle. |
+| GET | `/api/admin/cars/:id` | View vehicle details, including inactive cars and vehicle code. |
+| PATCH/PUT | `/api/admin/cars/:id` | Partial update / full replacement of editable vehicle fields. |
+| DELETE | `/api/admin/cars/:id` | Empty JSON; soft-deactivate as inactive; never physically deletes the row. |
+| GET | `/api/admin/reservations` | Cross-customer reservation list with saved price, payment status and eligible actions. |
+| PATCH | `/api/admin/reservations/:id` | `{ status }`: confirmed, cancelled or completed, subject to lifecycle rules. |
+| GET | `/api/admin/customers` and `/api/admin/customers/:id` | Search/list and view customer contact details; administrators are excluded. |
+| PATCH | `/api/admin/customers/:id` | Partial fullName/email/phone update only. |
+| GET | `/api/admin/payments` | Cross-customer simulated payment overview and reservation references. |
+| POST | `/api/admin/payments/:id/refund` | Existing full simulated refund, now available from the dashboard. |
+
+All list endpoints accept page/pageSize (default 1/10, maximum pageSize 50) and literal search up to 100 characters. Cars, reservations and payments also accept their own status values; unknown/repeated parameters return 400. Lists use stable descending ID order. Car search matches code/brand/model; customer search matches name/email/phone; reservation/payment search matches reservation/payment IDs, customer name/email and vehicle name. No caller-controlled SQL sort or column names are accepted.
+
+Vehicle editing covers unique vehicle code, brand/model, category, seats 1–20, transmission, fuel type, nonnegative daily price, image URL and active/maintenance/inactive status. Daily price is a decimal string with up to two decimal places; no binary floating-point amount is stored. Image sources are HTTP(S) URLs without credentials or local paths under /images/; script/data/protocol-relative URLs and local traversal are rejected. Images are loaded by the browser, not fetched by the server. Duplicate vehicle codes return 409.
+
+New vehicles default to inactive in the form, so they can be reviewed before activation. Deactivation retains all reservation/payment/points references and saved pricing. Price edits affect future quotes/bookings only; existing reservation snapshots are unchanged. Maintenance/inactive status changes and deactivation lock the car and reject with 409 CAR_HAS_RESERVATIONS if pending/confirmed reservations end after today's Istanbul date. Resolve those ongoing/upcoming bookings first. This uses the same car lock as booking creation, so a concurrent booking cannot slip into a car being deactivated. Historical reservations are preserved and inactive cars may later be reactivated. Applied migrations are unchanged; no new schema or destructive data migration is required for Phase 7.
+
+Reservation management uses the existing car -> reservation -> payment/ledger lock order. Confirmation requires an active car, a paid pending/confirmed rental that has not ended, and no overlapping blocking reservation. Normal successful customer payment already confirms its rental. Unpaid rentals cannot be manually confirmed into a state where payment would be impossible. Cancelled/completed rentals cannot be reopened, and admin status writes cannot change car, owner, dates, amounts or payment fields.
+
+Admins may cancel pending/confirmed rentals even after pickup for operational correction; this explicitly refunds paid amounts and reverses any points atomically. Owner cancellation retains its stricter before-pickup rule. Admin completion reuses the Phase 6 paid/return-date checks and grants points exactly once, including under concurrent requests. Completed rentals reject cancellation; use the payment refund correction to preserve completed history while reversing points. Refunds are explicitly confirmed with their payment reference/amount before submission. There is no manual paid/failed toggle or direct point-balance editor.
+
+Customer editing permits only name/email/phone, validates the existing profile rules and unique email constraint, and leaves password hashes, roles, sessions and historical records intact. Admin accounts are not editable through customer endpoints. Customer deletion, password reset, role administration, arbitrary reservation rescheduling and hard deletion are outside this phase.
+
+Phase 7 acceptance on 2026-11-05:
+
+- `npm test --prefix server`: 9/9 passed.
+- `npm run build --prefix client`: passed.
+- `docker compose --profile test run --build --rm test`: 67/67 passed against isolated real MySQL. Eleven new cases cover every admin endpoint's anonymous/customer rejection, vehicle CRUD/validation, literal search/status/pagination, snapshot/history preservation, blocked deactivation, deactivation-vs-booking concurrency, limited customer edits, cross-customer overviews and safe reservation/payment/loyalty transitions.
+- `npm run test:e2e --prefix client`: 16/16 passed in the final full Edge run. Three new real admin scenarios verify create/edit/deactivate, guarded deactivation, cancellation/refund/history preservation, customer contact updates, payment overview/refund, list errors/retry, empty search, status filtering and pagination. All thirteen previous customer scenarios also pass.
+- The first browser run exposed a select-label association issue; explicit id/htmlFor labels fixed it. A later search assertion raced the previous unfiltered list; tests now await the matching search response and target the specific customer record. The final full run passed at the normal timeout.
+- Admin browser tests require the local development/test Compose server. They create a unique admin via the documented seed command, unique customers and dedicated E2E-ADMIN vehicles. Cleanup cancels/refunds their bookings and deactivates their vehicles; no existing vehicles/customers are edited. Test histories and fixtures remain available in the selected development database. E2E_BASE_URL must point to that Compose application for admin scenarios.
+- Desktop/mobile dashboard, car editor and payment screenshots reviewed under ignored `client/test-results/`; 390 px checks found no horizontal overflow.
+- `docker compose up --build -d --wait`: passed with application services healthy. The API was restarted before final browser acceptance to clear accumulated development login attempts; authentication limits were not changed and database data/sessions were preserved. `git diff --check`: passed.
+
+Only Phase 7 was added in this step. Phase 8 quality/demo audit remains pending.
 
 ## 0. Project contract
 
@@ -440,7 +484,7 @@ Use consistent **start inclusive, end exclusive** date ranges and document timez
 - [x] P4 Availability and alternatives
 - [x] P5 Booking and concurrency safety
 - [x] P6 Simulated payments and loyalty
-- [ ] P7 Admin management CRUD
+- [x] P7 Admin management CRUD
 - [ ] P8 Full tests and demo documentation
 
 Update this checklist only when the corresponding phase's acceptance checks have actually passed.

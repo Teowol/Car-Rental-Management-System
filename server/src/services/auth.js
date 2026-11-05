@@ -1,5 +1,6 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
+import { allowedClientOrigins } from '../config/origins.js';
 
 const scrypt = promisify(scryptCallback);
 const options = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
@@ -81,8 +82,7 @@ export function requireAdmin(req, _res, next) {
 }
 export function requireTrustedWrite(req, _res, next) {
   if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
-    const origin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-    if (req.get('Origin') !== origin || req.get('X-Requested-With') !== 'SmartRent') throw authError(403, 'INVALID_ORIGIN', 'Request origin not allowed.');
+    if (!allowedClientOrigins().includes(req.get('Origin')) || req.get('X-Requested-With') !== 'SmartRent') throw authError(403, 'INVALID_ORIGIN', 'Request origin not allowed.');
     if (!req.is('application/json')) throw authError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Use application/json.');
   }
   next();
